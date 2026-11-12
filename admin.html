@@ -10,12 +10,12 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main id="app" class="wide">
+<main class="wide">
 
-  <!-- หน้าเข้าสู่ระบบ -->
+  <!-- เข้าสู่ระบบ -->
   <section id="login" hidden style="max-width:420px;margin:40px auto">
     <h1>เข้าสู่ระบบผู้ดูแล</h1>
-    <p class="sub">ใช้อีเมลและรหัสผ่านที่สร้างไว้ใน Supabase</p>
+    <p class="sub">ใช้อีเมลและรหัสผ่านที่สร้างไว้ใน Supabase (Authentication &gt; Users)</p>
     <form id="loginForm" class="card">
       <label for="email">อีเมล</label>
       <input id="email" type="email" required autocomplete="username">
@@ -29,35 +29,68 @@
     <p class="foot"><a href="index.html">กลับไปหน้าลงทะเบียน</a></p>
   </section>
 
-  <!-- หน้าข้อมูล -->
+  <!-- ข้อมูลลงทะเบียน -->
   <section id="panel" hidden>
     <div class="topbar">
       <div>
         <h1>ข้อมูลผู้ลงทะเบียน</h1>
-        <div class="count" id="count"></div>
+        <div class="count" id="who"></div>
       </div>
       <div class="tools">
-        <input id="search" type="search" placeholder="ค้นหาชื่อ / เลขนักศึกษา / สาขา">
-        <button id="refresh" class="ghost" type="button">รีเฟรช</button>
-        <button id="csv" class="ghost" type="button">ดาวน์โหลด CSV</button>
+        <a class="btn ghost" href="index.html">หน้าลงทะเบียน</a>
         <button id="logout" class="ghost" type="button">ออกจากระบบ</button>
       </div>
     </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="topbar">
+      <div class="count" id="count"></div>
+      <div class="tools">
+        <input id="search" type="search" placeholder="ค้นหาชื่อ / เลขนักศึกษา / สาขา">
+        <select id="filterLevel" aria-label="กรองตามระดับชั้น"><option value="">ทุกระดับชั้น</option></select>
+        <button id="refresh" class="ghost" type="button">รีเฟรช</button>
+        <button id="csv" class="ghost" type="button">ดาวน์โหลด CSV</button>
+      </div>
+    </div>
+
     <div class="tablewrap">
       <table>
         <thead>
           <tr>
-            <th>เลขนักศึกษา</th><th>ชื่อ</th><th>นามสกุล</th><th>อายุ</th>
-            <th>แผนก</th><th>สาขา</th><th>ระดับชั้น</th><th>คติประจำใจ</th><th>ลงทะเบียนเมื่อ</th><th></th>
+            <th>เลขนักศึกษา</th><th>ชื่อ</th><th>นามสกุล</th><th>อายุ</th><th>แผนก</th>
+            <th>สาขา</th><th>ระดับชั้น</th><th>คติประจำใจ</th><th>ลงทะเบียนเมื่อ</th><th></th>
           </tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
-      <div id="empty" class="empty" hidden>ยังไม่มีข้อมูล</div>
+      <div id="empty" class="empty" hidden>ยังไม่มีข้อมูลลงทะเบียน</div>
     </div>
     <div id="panelMsg" class="msg" role="alert"></div>
   </section>
 </main>
+
+<!-- แก้ไขข้อมูล -->
+<dialog id="editDlg">
+  <h2>แก้ไขข้อมูล</h2>
+  <form id="editForm" method="dialog">
+    <div class="grid">
+      <div><label for="e_first_name">ชื่อ</label><input id="e_first_name" required></div>
+      <div><label for="e_last_name">นามสกุล</label><input id="e_last_name" required></div>
+      <div><label for="e_age">อายุ</label><input id="e_age" type="number" min="5" max="120" required></div>
+      <div><label for="e_student_id">เลขนักศึกษา</label><input id="e_student_id" required></div>
+      <div><label for="e_department">แผนก</label><input id="e_department" required></div>
+      <div><label for="e_branch">สาขา</label><input id="e_branch" required></div>
+      <div class="full"><label for="e_level">ระดับชั้น</label><input id="e_level" required></div>
+      <div class="full"><label for="e_motto">คติประจำใจ</label><textarea id="e_motto" maxlength="300"></textarea></div>
+    </div>
+    <div id="editMsg" class="msg" role="alert"></div>
+    <div class="row-end">
+      <button type="button" class="ghost" id="editCancel">ยกเลิก</button>
+      <button type="submit" id="editSave">บันทึก</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
@@ -65,47 +98,67 @@
 const { SUPABASE_URL, SUPABASE_ANON_KEY } = window.APP_CONFIG;
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
+const TABLE = 'registrations';
 let all = [];
+let editingId = null;
 
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function flash(el, type, text){ el.className = 'msg ' + type; el.textContent = text; }
-function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function clear(el){ el.className = 'msg'; el.textContent = ''; }
 
+/* ---------- เข้าสู่ระบบ ---------- */
 async function route(){
   const { data:{ session } } = await db.auth.getSession();
   $('login').hidden = !!session;
   $('panel').hidden = !session;
-  if (session) load();
+  if (session){ $('who').textContent = 'ผู้ดูแล: ' + session.user.email; load(); }
 }
-
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const { error } = await db.auth.signInWithPassword({ email: $('email').value, password: $('password').value });
-  if (error) { flash($('loginMsg'), 'err', 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'); return; }
-  $('password').value = '';
-  $('loginMsg').className = 'msg';
-  route();
+  const { error } = await db.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
+  if (error){ flash($('loginMsg'), 'err', 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'); return; }
+  $('password').value = ''; clear($('loginMsg')); route();
 });
+$('logout').addEventListener('click', async () => { await db.auth.signOut(); all = []; route(); });
+db.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT') route(); });
 
-$('logout').addEventListener('click', async () => { await db.auth.signOut(); route(); });
-$('refresh').addEventListener('click', load);
-$('search').addEventListener('input', render);
-
+/* ---------- โหลด / แสดงข้อมูล ---------- */
 async function load(){
-  const { data, error } = await db.from('registrations').select('*').order('created_at', { ascending:false });
-  if (error) { flash($('panelMsg'), 'err', 'โหลดข้อมูลไม่สำเร็จ: ' + error.message); return; }
-  $('panelMsg').className = 'msg';
-  all = data; render();
+  const { data, error } = await db.from(TABLE).select('*').order('created_at', { ascending:false });
+  if (error){ flash($('panelMsg'), 'err', 'โหลดข้อมูลไม่สำเร็จ: ' + error.message); return; }
+  clear($('panelMsg'));
+  all = data;
+  fillLevels(); render();
 }
-
+function fillLevels(){
+  const cur = $('filterLevel').value;
+  const levels = [...new Set(all.map(r => r.level))].sort();
+  $('filterLevel').innerHTML = '<option value="">ทุกระดับชั้น</option>' +
+    levels.map(l => `<option>${esc(l)}</option>`).join('');
+  $('filterLevel').value = levels.includes(cur) ? cur : '';
+}
 function filtered(){
   const q = $('search').value.trim().toLowerCase();
-  if (!q) return all;
-  return all.filter(r => [r.student_id, r.first_name, r.last_name, r.department, r.branch, r.level]
-    .join(' ').toLowerCase().includes(q));
+  const lv = $('filterLevel').value;
+  return all.filter(r =>
+    (!lv || r.level === lv) &&
+    (!q || [r.student_id, r.first_name, r.last_name, r.department, r.branch, r.level, r.motto]
+      .join(' ').toLowerCase().includes(q)));
 }
-
+function renderStats(){
+  const total = all.length;
+  const today = new Date().toDateString();
+  const todayN = all.filter(r => new Date(r.created_at).toDateString() === today).length;
+  const avg = total ? (all.reduce((s, r) => s + r.age, 0) / total).toFixed(1) : '-';
+  const branches = new Set(all.map(r => r.branch)).size;
+  $('stats').innerHTML = [
+    ['ผู้ลงทะเบียนทั้งหมด', total], ['ลงทะเบียนวันนี้', todayN],
+    ['อายุเฉลี่ย', avg], ['จำนวนสาขา', branches]
+  ].map(([l, v]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
+}
 function render(){
   const list = filtered();
+  renderStats();
   $('count').textContent = `แสดง ${list.length} จากทั้งหมด ${all.length} คน`;
   $('empty').hidden = list.length > 0;
   $('rows').innerHTML = list.map(r => `
@@ -114,30 +167,62 @@ function render(){
       <td>${esc(r.department)}</td><td>${esc(r.branch)}</td><td>${esc(r.level)}</td>
       <td>${esc(r.motto)}</td>
       <td>${new Date(r.created_at).toLocaleString('th-TH')}</td>
-      <td><button class="danger" data-id="${esc(r.id)}">ลบ</button></td>
+      <td class="actions">
+        <button class="ghost small" data-edit="${esc(r.id)}">แก้ไข</button>
+        <button class="danger" data-del="${esc(r.id)}">ลบ</button>
+      </td>
     </tr>`).join('');
 }
+$('search').addEventListener('input', render);
+$('filterLevel').addEventListener('change', render);
+$('refresh').addEventListener('click', load);
 
+/* ---------- แก้ไข / ลบ ---------- */
+const F = ['first_name','last_name','age','student_id','department','branch','level','motto'];
 $('rows').addEventListener('click', async (e) => {
-  const id = e.target.dataset?.id;
-  if (!id) return;
-  if (!confirm('ต้องการลบข้อมูลนี้ใช่หรือไม่?')) return;
-  const { error } = await db.from('registrations').delete().eq('id', id);
-  if (error) { flash($('panelMsg'), 'err', 'ลบไม่สำเร็จ: ' + error.message); return; }
-  all = all.filter(r => r.id !== id); render();
+  const del = e.target.dataset?.del, edit = e.target.dataset?.edit;
+  if (del){
+    if (!confirm('ต้องการลบข้อมูลนี้ใช่หรือไม่?')) return;
+    const { error } = await db.from(TABLE).delete().eq('id', del);
+    if (error){ flash($('panelMsg'), 'err', 'ลบไม่สำเร็จ: ' + error.message); return; }
+    all = all.filter(r => r.id !== del); fillLevels(); render();
+  }
+  if (edit){
+    const r = all.find(x => x.id === edit); if (!r) return;
+    editingId = edit; clear($('editMsg'));
+    F.forEach(k => $('e_' + k).value = r[k] ?? '');
+    $('editDlg').showModal();
+  }
+});
+$('editCancel').addEventListener('click', () => $('editDlg').close());
+$('editForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const row = {};
+  F.forEach(k => row[k] = $('e_' + k).value.trim());
+  row.age = parseInt(row.age, 10);
+  row.motto = row.motto || null;
+  $('editSave').disabled = true;
+  const { data, error } = await db.from(TABLE).update(row).eq('id', editingId).select().single();
+  $('editSave').disabled = false;
+  if (error){
+    flash($('editMsg'), 'err', error.code === '23505' ? 'เลขนักศึกษานี้มีอยู่แล้ว' : 'บันทึกไม่สำเร็จ: ' + error.message);
+    return;
+  }
+  all = all.map(r => r.id === editingId ? data : r);
+  $('editDlg').close(); fillLevels(); render();
 });
 
+/* ---------- CSV ---------- */
 $('csv').addEventListener('click', () => {
   const head = ['student_id','first_name','last_name','age','department','branch','level','motto','created_at'];
-  const cell = (v) => '"' + String(v ?? '').replace(/"/g,'""') + '"';
+  const cell = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
   const lines = [head.join(',')].concat(filtered().map(r => head.map(h => cell(r[h])).join(',')));
   const blob = new Blob(['\ufeff' + lines.join('\n')], { type:'text/csv;charset=utf-8' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = 'students.csv'; a.click();
+  a.href = URL.createObjectURL(blob); a.download = 'registrations.csv'; a.click();
   URL.revokeObjectURL(a.href);
 });
 
-db.auth.onAuthStateChange(() => route());
 route();
 </script>
 </body>
